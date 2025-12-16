@@ -53,8 +53,16 @@ const client = new MongoClient(process.env.MONGODB_URI, {
 
 async function run() {
   try {
-    const db = client.db("model-db");
-    const usersCollection = db.collection("users-db");
+    const db = client.db("utility_bill");
+    const usersCollection = db.collection("users-am");
+    const assetsCollection = db.collection("assets-am");
+    const requestsCollection = db.collection("requests-am");
+    const assignedAssetsCollection = db.collection("assignedAssets-db");
+    const employeeAffiliationsCollection = db.collection(
+      "employeeAffiliations-am"
+    );
+    const packagesCollection = db.collection("packages-am");
+    const paymentsCollection = db.collection("payments-am");
 
     // role based middleware
     const verifyEmployee = async (req, res, next) => {
@@ -84,6 +92,125 @@ async function run() {
         res.status(500).send({ message: "Internal Server Error" });
       }
     };
+
+    // users  APIs
+    // post users
+    app.post("/users", async (req, res) => {
+      try {
+        const userInfo = req.body;
+
+        const existingUser = await usersCollection.findOne({
+          email: userInfo?.email,
+        });
+
+        if (existingUser) {
+          return res.status(409).send({ message: "User already exits" });
+        }
+
+        const result = await usersCollection.insertOne(userInfo);
+
+        res.status(201).send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    // get a user
+    app.get("/users/:email", async (req, res) => {
+      try {
+        const { email } = req.params;
+        const result = await usersCollection.findOne({ email });
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    // get users role
+    app.get("/user/role", verifyJWT, async (req, res) => {
+      try {
+        const email = req.tokenEmail;
+        const result = await usersCollection.findOne({ email });
+        res.send({ role: result?.role });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    // update user
+    app.patch("/user", verifyJWT, async (req, res) => {
+      try {
+        const { name } = req.body;
+        const email = req.tokenEmail;
+
+        const result = await usersCollection.updateOne(
+          { email },
+          { $set: { name } }
+        );
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    // Asset APIs
+
+    // Post asset
+    app.post("/assets", async (req, res) => {
+      try {
+        const assetData = req.body;
+        const result = await assetsCollection.insertOne(assetData);
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    // Get all assets
+    app.get("/assets", async (req, res) => {
+      try {
+        const result = await assetsCollection.find().toArray();
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    //get all assets of a company
+    app.get("/company-assets/:email", async (req, res) => {
+      try {
+        const { email: hrEmail } = req.params;
+        const result = await assetsCollection.find({ hrEmail }).toArray();
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: " Internal Server Error" });
+      }
+    });
+
+    // Get a employees assets
+    app.get("/my-assets/:email", async (req, res) => {
+      try {
+        const { email } = req.params;
+
+        const query = {};
+        if (email) {
+          query.employeeEmail = email;
+        }
+
+        const result = await assignedAssetsCollection.find(query).toArray();
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
