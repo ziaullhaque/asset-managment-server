@@ -561,6 +561,57 @@ async function run() {
       }
     });
 
+    // Get a HRs employee
+    app.get("/my-employees/:email", async (req, res) => {
+      try {
+        const { email: hrEmail } = req.params;
+
+        // 1 Get all asset assignments for this HR
+        const employeeAffiliations = await employeeAffiliationsCollection
+          .find({ hrEmail })
+          .toArray();
+
+        const assignedAssets = await assignedAssetsCollection
+          .find({ hrEmail })
+          .toArray();
+
+        // 2 Get unique employee emails
+        const employeeEmails = [
+          ...new Set(employeeAffiliations.map((e) => e.employeeEmail)),
+        ];
+
+        if (employeeEmails.length === 0) {
+          return res.send([]);
+        }
+
+        // 3 Get employee details from usersCollection
+        const employees = await usersCollection
+          .find({
+            email: { $in: employeeEmails },
+          })
+          .toArray();
+
+        // 4 Count assets for each employee
+        const result = employees.map((emp) => {
+          const assetCount = assignedAssets.filter(
+            (a) => a.employeeEmail === emp.email
+          ).length;
+
+          return {
+            name: emp.name,
+            email: emp.email,
+            image: emp.profileImage,
+            assetCount,
+          };
+        });
+
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log(
