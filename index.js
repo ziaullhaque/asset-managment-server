@@ -212,6 +212,355 @@ async function run() {
       }
     });
 
+    // Edit asset
+    app.patch("/assets/:id", async (req, res) => {
+      try {
+        const updateData = req.body;
+        const { id } = req.params;
+        const query = { _id: new ObjectId(id) };
+
+        const update = {
+          $set: updateData,
+        };
+
+        const asset = await assetsCollection.findOne({ _id: new ObjectId(id) });
+        console.log(asset);
+
+        const result = await assetsCollection.updateOne(query, update);
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "Asset Not Found" });
+        }
+
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    // assign asset
+    app.patch("/assign-asset/:id", async (req, res) => {
+      try {
+        const updateData = req.body;
+        const { id } = req.params;
+        const query = { _id: new ObjectId(id) };
+
+        const update = {
+          $set: updateData,
+        };
+
+        const asset = await assetsCollection.findOne({ _id: new ObjectId(id) });
+        console.log(asset);
+
+        if (asset.availableQuantity === 0) {
+          return res.status(404).send({ message: "Asset Not Available" });
+        }
+
+        const result = await assetsCollection.updateOne(query, update);
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "Asset Not Found" });
+        }
+
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    // Delete asset
+    app.delete("/asset/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const query = { _id: new ObjectId(id) };
+        const result = await assetsCollection.deleteOne(query);
+
+        if (result.deletedCount === 0) {
+          return res.status(404).send({ message: "Asset Not Found" });
+        }
+
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    // Request Related APIs
+
+    // Post assigned asset (direct assignment from HR)
+    app.post("/assigned-assets", async (req, res) => {
+      try {
+        const assignmentData = req.body;
+        const employeeEmail = assignmentData.employeeEmail;
+        const assetId = assignmentData.assetId;
+        const hrEmail = assignmentData.hrEmail;
+
+        const existingAssets = await assignedAssetsCollection.findOne({
+          employeeEmail,
+          assetId,
+        });
+
+        if (existingAssets) {
+          return res.status(409).send({ message: "Asset Already Assigned" });
+        }
+
+        // Check if employee already exists in the company (team)
+        const existingEmployeeAffiliation =
+          await employeeAffiliationsCollection.findOne({
+            employeeEmail,
+            hrEmail,
+          });
+
+        // Get HR info
+        const hr = await usersCollection.findOne({ email: hrEmail });
+
+        if (!hr) {
+          return res.status(404).send({ message: "HR not found" });
+        }
+
+        const updatePackageLimit = hr.packageLimit - 1;
+
+        // Only increment currentEmployees if this is a NEW employee for the HR
+        let updateCurrentEmployees = hr.currentEmployees;
+        if (!existingEmployeeAffiliation) {
+          updateCurrentEmployees = hr.currentEmployees + 1;
+        }
+
+        // Update HR package limit and employee count
+        const updateHR = {
+          $set: {
+            packageLimit: updatePackageLimit,
+            currentEmployees: updateCurrentEmployees,
+          },
+        };
+
+        await usersCollection.updateOne({ email: hrEmail }, updateHR);
+        const result = await assignedAssetsCollection.insertOne(assignmentData);
+
+        // Only add to employee affiliations if this is a NEW employee
+        if (!existingEmployeeAffiliation) {
+          const employeeAffiliationData = {
+            employeeName: assignmentData.employeeName,
+            employeeEmail: employeeEmail,
+            companyName: assignmentData.companyName,
+            companyLogo: hr?.companyLogo,
+            hrEmail: hrEmail,
+            affiliationDate: new Date().toISOString(),
+            status: "active",
+          };
+          await employeeAffiliationsCollection.insertOne(
+            employeeAffiliationData
+          );
+        }
+
+        res.status(201).send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    // Post asset request
+    app.post("/asset-requests", async (req, res) => {
+      try {
+        const requestData = req.body;
+        requestData.requestDate = new Date().toISOString();
+        requestData.approvalDate = null;
+        requestData.requestStatus = "pending";
+
+        const existingRequest = await requestsCollection.findOne({
+          assetId: requestData.assetId,
+          requesterEmail: requestData.requesterEmail,
+        });
+
+        if (existingRequest) {
+          return res.status(409).send({ message: "Already Requested" });
+        }
+
+        const result = await requestsCollection.insertOne(requestData);
+        res.status(201).send(result);
+      } catch (error) {
+        console.error(error);
+        req.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    // Get asset requests
+    app.get("/asset-requests/:email", async (req, res) => {
+      try {
+        const { email } = req.params;
+        const { limit = 0, skip = 0 } = req.query;
+
+        const query = {};
+
+        if (email) {
+          query.hrEmail = email;
+        }
+
+        const result = await requestsCollection
+          .find(query)
+          .limit(Number(limit))
+          .skip(Number(skip))
+          .toArray();
+
+        const count = await requestsCollection.countDocuments({
+          hrEmail: email,
+        });
+
+        res.send({ requests: result, total: count });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    // Approve employee request
+    app.patch("/approve-employee-requests/:id", async (req, res) => {
+      try {
+        const { requestStatus, assetId } = req.body;
+        const { id } = req.params;
+        const query = { _id: new ObjectId(id) };
+        const assetQuery = {
+          _id: new ObjectId(assetId),
+        };
+
+        const update = {
+          $set: { requestStatus, approvalDate: new Date().toISOString() },
+        };
+
+        const asset = await assetsCollection.findOne(assetQuery);
+
+        const latestQuantity = asset.availableQuantity - 1;
+
+        const assetUpdate = {
+          $set: { availableQuantity: latestQuantity },
+        };
+
+        const request = await requestsCollection.findOne(query);
+
+        const assignedAssetListData = {
+          assetId: asset?._id.toString(),
+          assetName: asset?.productName,
+          assetImage: asset?.productImage,
+          assetType: asset?.productType,
+          employeeEmail: request?.requesterEmail,
+          employeeName: request?.requesterName,
+          hrEmail: request?.hrEmail,
+          companyName: request?.companyName,
+          assignmentDate: new Date().toISOString(),
+          returnDate: null,
+          status: "assigned",
+        };
+
+        const hr = await usersCollection.findOne({ email: request?.hrEmail });
+
+        const employeeAffiliationsListData = {
+          employeeName: request?.requesterName,
+          employeeEmail: request?.requesterEmail,
+          companyName: request?.companyName,
+          companyLogo: hr?.companyLogo,
+          hrEmail: request?.hrEmail,
+          affiliationDate: new Date().toISOString(),
+          status: "active",
+        };
+
+        if (!request) {
+          return res.status(404).send({ message: "Request Not Found" });
+        }
+        if (request.requestStatus === "approved") {
+          return res.status(409).send({ message: "Request Already Approved" });
+        }
+
+        const existingAssignedAssetCollection =
+          await assignedAssetsCollection.findOne({
+            assetId: asset?._id.toString(),
+            employeeEmail: request?.requesterEmail,
+            status: "assigned",
+          });
+
+        if (existingAssignedAssetCollection) {
+          return res.status(409).send({ message: "Already Assigned" });
+        }
+
+        const existingEmployeeAffiliation =
+          await employeeAffiliationsCollection.findOne({
+            employeeEmail: request?.requesterEmail,
+            hrEmail: request?.hrEmail,
+          });
+
+        const updatePackageLimit = hr.packageLimit - 1;
+
+        // Only increment currentEmployees if this is a NEW employee for the HR
+        let updateCurrentEmployees = hr.currentEmployees;
+        if (!existingEmployeeAffiliation) {
+          updateCurrentEmployees = hr.currentEmployees + 1;
+        }
+
+        const updateHR = {
+          $set: {
+            packageLimit: updatePackageLimit,
+            currentEmployees: updateCurrentEmployees,
+          },
+        };
+
+        if (hr.packageLimit === 0) {
+          return res.status(409).send({
+            message:
+              "Your Package has been Finished, Buy Package for Approve Assignment",
+          });
+        }
+
+        await usersCollection.updateOne({ email: hr?.email }, updateHR);
+        await assetsCollection.updateOne(assetQuery, assetUpdate);
+        await assignedAssetsCollection.insertOne(assignedAssetListData);
+        const result = await requestsCollection.updateOne(query, update);
+
+        if (!existingEmployeeAffiliation) {
+          await employeeAffiliationsCollection.insertOne(
+            employeeAffiliationsListData
+          );
+        }
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    // Reject employee request
+    app.patch("/reject-employee-requests/:id", async (req, res) => {
+      try {
+        const { requestStatus } = req.body;
+        const { id } = req.params;
+        const query = { _id: new ObjectId(id) };
+
+        const update = {
+          $set: {
+            requestStatus,
+          },
+        };
+
+        const existingRequest = await requestsCollection.findOne(query);
+
+        if (!existingRequest) {
+          return res.status(404).send({ message: "Request Not Found" });
+        }
+
+        if (existingRequest.requestStatus !== "pending") {
+          return res.status(409).send({ message: "Already Processed" });
+        }
+
+        const result = await requestsCollection.updateOne(query, update);
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log(
