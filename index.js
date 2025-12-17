@@ -5,6 +5,8 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const admin = require("firebase-admin");
 const port = process.env.PORT || 3001;
+// const dns = require("dns");
+// dns.setDefaultResultOrder("ipv4first");
 const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
   "utf-8"
 );
@@ -53,6 +55,9 @@ const client = new MongoClient(process.env.MONGODB_URI, {
 
 async function run() {
   try {
+    // await client.connect();
+    // console.log("MongoDB connected");
+
     const db = client.db("utility_bill");
     const usersCollection = db.collection("users-am");
     const assetsCollection = db.collection("assets-am");
@@ -680,6 +685,141 @@ async function run() {
       } catch (error) {
         console.error(error);
         res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    // Delete an employee
+    app.delete("/my-employees/:email", async (req, res) => {
+      try {
+        const { email: employeeEmail } = req.params;
+        const result = await employeeAffiliationsCollection.deleteOne({
+          employeeEmail,
+        });
+
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    // Package related APIs
+
+    // Get all packa
+    app.get("/packages", async (req, res) => {
+      try {
+        const result = await packagesCollection.find().toArray();
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    // Payment Endpoints
+
+    app.post("/create-checkout-session", async (req, res) => {
+      // try {
+      const paymentInfo = req.body;
+      console.log(paymentInfo);
+      const session = await stripe.checkout.sessions.create({
+        line_items: [
+          {
+            price_data: {
+              currency: "usd",
+              product_data: {
+                name: paymentInfo?.name,
+              },
+              unit_amount: paymentInfo?.price * 100,
+            },
+            quantity: 1,
+          },
+        ],
+        customer_email: paymentInfo?.customer?.email,
+        mode: "payment",
+        metadata: {
+          packageId: paymentInfo?.packageId,
+          customer: paymentInfo?.customer?.name,
+          employeeLimit: paymentInfo?.employeeLimit,
+        },
+        success_url: `${process.env.CLIENT_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.CLIENT_DOMAIN}/dashboard/upgrade-package`,
+      });
+
+      res.send({ url: session.url });
+    });
+
+    app.post("/payment-success", async (req, res) => {
+      try {
+        const { sessionId } = req.body;
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+        const hrQuery = { email: session?.customer_email };
+        const hr = await usersCollection.findOne(hrQuery);
+
+        const packageData = await packagesCollection.findOne({
+          _id: new ObjectId(session.metadata.packageId),
+        });
+
+        const existingPayment = await paymentsCollection.findOne({
+          transitionId: session.payment_intent,
+        });
+
+        if (session.payment_status === "paid" && packageData) {
+          const orderInfo = {
+            hrEmail: session.customer_email,
+            packageName: packageData?.name,
+            transitionId: session.payment_intent,
+            amount: session.amount_total / 100,
+            employeeLimit: Number(session.metadata.employeeLimit),
+            paymentDate: new Date().toISOString(),
+            status: "completed",
+          };
+
+          if (existingPayment) {
+            return res.send({
+              transitionId: session.payment_intent,
+              message: "Payment already recorded",
+            });
+          }
+
+          const result = await paymentsCollection.insertOne(orderInfo);
+
+          const increaseLimit =
+            hr.packageLimit + Number(session.metadata.employeeLimit);
+
+          const hrUpdate = {
+            $set: { packageLimit: increaseLimit },
+          };
+
+          // Increase Package Limit of HR
+          await usersCollection.updateOne(hrQuery, hrUpdate);
+          return res.send({
+            transitionId: session.payment_intent,
+            orderId: result.insertedId,
+          });
+        }
+        return res.send({
+          transitionId: session.payment_intent,
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    // Get payment history
+    app.get("/payments/:email", async (req, res) => {
+      try {
+        const { email } = req.params;
+
+        const result = await paymentsCollection
+          .find({ hrEmail: email })
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.send({ message: "Internal Server Error" });
       }
     });
 
