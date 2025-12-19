@@ -18,7 +18,7 @@ const app = express();
 app.use(
   cors({
     origin: [
-      process.env.CLIENT_DOMAIN || "http://localhost:5173",
+      process.env.CLIENT_DOMAIN || "https://asset-managment-byzia.netlify.app",
       "http://localhost:5173",
       "http://localhost:5174",
     ],
@@ -332,18 +332,36 @@ async function run() {
     });
 
     // Get employees assets
+    // app.get(
+    //   "/my-assets/:email",
+    //   verifyJWT,
+    //   verifyEmployee,
+    //   async (req, res) => {
+    //     try {
+    //       const { email } = req.tokenEmail;
+
+    //       const query = {};
+    //       if (email) {
+    //         query.employeeEmail = email;
+    //       }
+
+    //       const result = await assignedAssetsCollection.find(query).toArray();
+    //       res.send(result);
+    //     } catch (error) {
+    //       console.error(error);
+    //       res.status(500).send({ message: "Internal Server Error" });
+    //     }
+    //   }
+    // );
     app.get(
       "/my-assets/:email",
       verifyJWT,
       verifyEmployee,
       async (req, res) => {
         try {
-          const { email } = req.tokenEmail;
+          const email = req.tokenEmail;
 
-          const query = {};
-          if (email) {
-            query.employeeEmail = email;
-          }
+          const query = { employeeEmail: email };
 
           const result = await assignedAssetsCollection.find(query).toArray();
           res.send(result);
