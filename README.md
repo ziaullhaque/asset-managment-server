@@ -3,9 +3,9 @@
 
 #  Server Side `README.md`
 
-# AssetVerse — Corporate Asset Management System (Server)
+# AssetManagment — Corporate Asset Management System (Server)
 
-This is the backend API for **AssetVerse**, a corporate asset management platform built using Node.js, Express, MongoDB, and Firebase JWT authentication.
+This is the backend API for **AssetManagment**, a corporate asset management platform built using Node.js, Express, MongoDB, and Firebase JWT authentication.
 
 
 ---
